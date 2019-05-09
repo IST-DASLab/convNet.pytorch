@@ -20,6 +20,10 @@ from datetime import datetime
 from ast import literal_eval
 from trainer import Trainer
 
+import horovod.torch as hvd
+
+BILLION = 1000000000
+
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
                      and callable(models.__dict__[name]))
@@ -99,10 +103,17 @@ parser.add_argument('--adapt-grad-norm', default=None, type=int,
                     help='adapt gradient scale frequency (default: None)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
-parser.add_argument('-e', '--evaluate', type=str, metavar='FILE',
+parser.add_argument('-e', '--evaluate', default=None, type=str, metavar='FILE',
                     help='evaluate model FILE on validation set')
 parser.add_argument('--seed', default=123, type=int,
                     help='random seed (default: 123)')
+parser.add_argument('--horovod', nargs='?',
+                        const=True, default=False,
+                        help='Use horovod as distributed engine.')
+parser.add_argument('--benchmark-mode', nargs='?', default=False, const=True,
+                        help='Run as benchmark without saving.')
+parser.add_argument('--quantization-bits', default=32, type=int,
+                    help='quantize tensor elements to this bits (so far only in horovod)')
 
 
 def main():
@@ -119,6 +130,12 @@ def main():
     save_path = os.path.join(args.results_dir, args.save)
 
     args.distributed = args.local_rank >= 0 or args.world_size > 1
+    if args.horovod:
+        hvd.init(args.quantization_bits)
+        args.local_rank = hvd.rank()
+        args.world_size = hvd.size()
+        if args.world_size < 2:
+            args.horovod = False
 
     if args.distributed:
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_init,
@@ -130,17 +147,20 @@ def main():
             args.device_ids = list(range(torch.cuda.device_count()))
         else:
             args.device_ids = [args.local_rank]
+    args.evaluate = args.evaluate if not args.benchmark_mode else False
 
-    if not os.path.exists(save_path) and not (args.distributed and args.local_rank > 0):
+    if not os.path.exists(save_path) \
+            and not ((args.horovod or args.distributed) and args.local_rank > 0):
         os.makedirs(save_path)
-
+    while not os.path.exists(save_path):
+        time.sleep(3)
     setup_logging(os.path.join(save_path, 'log.txt'),
                   resume=args.resume is not '',
                   dummy=args.distributed and args.local_rank > 0)
-
-    results_path = os.path.join(save_path, 'results')
-    results = ResultsLog(
-        results_path, title='Training Results - %s' % args.save)
+    if not args.benchmark_mode:
+        results_path = os.path.join(save_path, 'results')
+        results = ResultsLog(
+            results_path, title='Training Results - %s' % args.save)
 
     logging.info("saving to %s", save_path)
     logging.debug("run arguments: %s", args)
@@ -148,7 +168,7 @@ def main():
 
     if 'cuda' in args.device and torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
-        torch.cuda.set_device(args.device_ids[0])
+        torch.cuda.set_device(hvd.rank() if args.horovod else args.device_ids[0])
         cudnn.benchmark = True
     else:
         args.device_ids = None
@@ -208,10 +228,13 @@ def main():
                                               'optimizer': args.optimizer,
                                               'lr': args.lr,
                                               'momentum': args.momentum,
-                                              'weight_decay': args.weight_decay}])
+                                              'weight_decay': args.weight_decay,
+                                              'horovod': args.horovod}])
 
     optimizer = optim_regime if isinstance(optim_regime, OptimRegime) \
-        else OptimRegime(model, optim_regime, use_float_copy='half' in args.dtype)
+        else OptimRegime(model, optim_regime, defaults={'horovod': args.horovod}, use_float_copy='half' in args.dtype)
+    if args.horovod:
+        hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 
     trainer = Trainer(model, criterion, optimizer,
                       device_ids=args.device_ids, device=args.device, dtype=dtype,
@@ -235,12 +258,14 @@ def main():
                             defaults={'datasets_path': args.datasets_dir, 'name': args.dataset, 'split': 'train', 'augment': True,
                                       'input_size': args.input_size,  'batch_size': args.batch_size, 'shuffle': True,
                                       'num_workers': args.workers, 'pin_memory': True, 'drop_last': True,
-                                      'distributed': args.distributed, 'duplicates': args.duplicates, 'autoaugment': args.autoaugment,
+                                      'distributed': args.distributed, 'horovod': args.horovod, 'download': False,
+                                      'duplicates': args.duplicates, 'autoaugment': args.autoaugment,
                                       'cutout': {'holes': 1, 'length': 16} if args.cutout else None})
 
     logging.info('optimization regime: %s', optim_regime)
     args.start_epoch = max(args.start_epoch, 0)
     trainer.training_steps = args.start_epoch * len(train_data)
+    start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
         trainer.epoch = epoch
         train_data.set_epoch(epoch)
@@ -253,11 +278,20 @@ def main():
                                       chunk_batch=args.chunk_batch)
 
         # evaluate on validation set
-        val_results = trainer.validate(val_data.get_loader())
+        if not args.benchmark_mode:
+            val_results = trainer.validate(val_data.get_loader())
 
-        if args.distributed and args.local_rank > 0:
+        if (args.distributed or args.horovod) and args.local_rank > 0:
             continue
 
+        logging.info('\nResults - Epoch: {0}\n'
+                     'Training Loss {train[loss]:.4f} \t'
+                     'Training Prec@1 {train[prec1]:.3f} \t'
+                     'Training Prec@5 {train[prec5]:.3f} \t'
+                     'Data time: {train[data_sum]:.3f} \t'
+                     .format(epoch + 1, train=train_results))
+        if args.benchmark_mode:
+            continue
         # remember best prec@1 and save checkpoint
         is_best = val_results['prec1'] > best_prec1
         best_prec1 = max(val_results['prec1'], best_prec1)
@@ -269,34 +303,20 @@ def main():
             'best_prec1': best_prec1
         }, is_best, path=save_path)
 
-        logging.info('\nResults - Epoch: {0}\n'
-                     'Training Loss {train[loss]:.4f} \t'
-                     'Training Prec@1 {train[prec1]:.3f} \t'
-                     'Training Prec@5 {train[prec5]:.3f} \t'
-                     'Validation Loss {val[loss]:.4f} \t'
+        logging.info('Validation Loss {val[loss]:.4f} \t'
                      'Validation Prec@1 {val[prec1]:.3f} \t'
                      'Validation Prec@5 {val[prec5]:.3f} \t\n'
-                     .format(epoch + 1, train=train_results, val=val_results))
-
+                     .format(val=val_results))
         values = dict(epoch=epoch + 1, steps=trainer.training_steps)
         values.update({'training ' + k: v for k, v in train_results.items()})
         values.update({'validation ' + k: v for k, v in val_results.items()})
         results.add(**values)
 
-        results.plot(x='epoch', y=['training loss', 'validation loss'],
-                     legend=['training', 'validation'],
-                     title='Loss', ylabel='loss')
-        results.plot(x='epoch', y=['training error1', 'validation error1'],
-                     legend=['training', 'validation'],
-                     title='Error@1', ylabel='error %')
-        results.plot(x='epoch', y=['training error5', 'validation error5'],
-                     legend=['training', 'validation'],
-                     title='Error@5', ylabel='error %')
-        if 'grad' in train_results.keys():
-            results.plot(x='epoch', y=['training grad'],
-                         legend=['gradient L2 norm'],
-                         title='Gradient Norm', ylabel='value')
-        results.save()
+    if args.benchmark_mode:
+        logging.info('\n Elapsed time {0:.3f} s \n'.format(time.time() - start_time))
+        logging.info('Allreduce Time {0:.3f} s \n'
+                     'Communication time {1:.3f} s \n'
+                     .format(hvd.allreduce_time() / BILLION, hvd.communication_time() / BILLION))
 
 
 if __name__ == '__main__':

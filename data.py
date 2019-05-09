@@ -1,6 +1,7 @@
 import os
 import torch
 import torchvision.datasets as datasets
+import horovod.torch as hvd
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data.sampler import RandomSampler
 from utils.regime import Regime
@@ -63,7 +64,7 @@ _DATALOADER_ARGS = {'batch_size', 'shuffle', 'sampler', 'batch_sampler',
                     'timeout', 'worker_init_fn'}
 _TRANSFORM_ARGS = {'transform_name', 'input_size', 'scale_size', 'normalize', 'augment',
                    'cutout', 'duplicates', 'num_crops', 'autoaugment'}
-_OTHER_ARGS = {'distributed'}
+_OTHER_ARGS = {'distributed', 'horovod'}
 
 
 class DataRegime(object):
@@ -99,6 +100,9 @@ class DataRegime(object):
                 setting['loader']['shuffle'] = None
                 # pin-memory currently broken for distributed
                 setting['loader']['pin_memory'] = False
+            elif setting['other'].get('horovod', False):
+                setting['loader']['sampler'] = DistributedSampler(self._data, num_replicas=hvd.size(), rank=hvd.rank())
+                setting['loader']['shuffle'] = None
             self._sampler = setting['loader'].get('sampler', None)
             self._loader = torch.utils.data.DataLoader(
                 self._data, **setting['loader'])

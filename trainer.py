@@ -156,6 +156,7 @@ class Trainer(object):
             results = {name: meter.avg for name, meter in meters.items()}
             results['error1'] = 100. - results['prec1']
             results['error5'] = 100. - results['prec5']
+            results['data_sum'] = meters['data'].sum
             return results
 
         end = time.time()
