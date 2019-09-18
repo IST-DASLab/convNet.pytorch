@@ -282,7 +282,7 @@ class ResNetZI_cifar(ResNetZI):
 def resnet_zi(**config):
     dataset = config.pop('dataset', 'imagenet')
 
-    if 'imagenet' in dataset:
+    if 'imagenet' in dataset or 'imagewoof' in transform_name:
         config.setdefault('num_classes', 1000)
         depth = config.pop('depth', 50)
         if depth == 18:

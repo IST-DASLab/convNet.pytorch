@@ -165,14 +165,20 @@ def main():
     logging.info("saving to %s", save_path)
     logging.debug("run arguments: %s", args)
     logging.info("creating model %s", args.model)
-
+    mapping_devices = {
+        0: 0,
+        1: 3,
+        2: 0,
+        3: 3
+    }
     if 'cuda' in args.device and torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
-        torch.cuda.set_device(hvd.rank() if args.horovod else args.device_ids[0])
+        # torch.cuda.set_device(mapping_devices[hvd.local_rank()] if args.horovod else args.device_ids[0])
+        torch.cuda.set_device(hvd.local_rank() if args.horovod else args.device_ids[0])
         cudnn.benchmark = True
     else:
         args.device_ids = None
-
+    print(args)
     # create model
     model = models.__dict__[args.model]
     model_config = {'dataset': args.dataset}
@@ -276,19 +282,18 @@ def main():
         train_results = trainer.train(train_data.get_loader(),
                                       duplicates=train_data.get('duplicates'),
                                       chunk_batch=args.chunk_batch)
-
+        test_time = time.time()
         # evaluate on validation set
         if not args.benchmark_mode:
             val_results = trainer.validate(val_data.get_loader())
-
-        if (args.distributed or args.horovod) and args.local_rank > 0:
-            continue
+        print("Test time: ", time.time() - test_time)
 
         logging.info('\nResults - Epoch: {0}\n'
                      'Training Loss {train[loss]:.4f} \t'
                      'Training Prec@1 {train[prec1]:.3f} \t'
                      'Training Prec@5 {train[prec5]:.3f} \t'
                      'Data time: {train[data_sum]:.3f} \t'
+                     'Step time: {train[time_sum]:.3f} \t'
                      .format(epoch + 1, train=train_results))
         if args.benchmark_mode:
             continue
@@ -311,12 +316,30 @@ def main():
         values.update({'training ' + k: v for k, v in train_results.items()})
         values.update({'validation ' + k: v for k, v in val_results.items()})
         results.add(**values)
+        results.plot(x='epoch', y=['training loss', 'validation loss'],
+                     legend=['training', 'validation'],
+                     title='Loss', ylabel='loss')
+        results.plot(x='epoch', y=['training error1', 'validation error1'],
+                     legend=['training', 'validation'],
+                     title='Error@1', ylabel='error %')
+        results.plot(x='epoch', y=['training error5', 'validation error5'],
+                     legend=['training', 'validation'],
+                     title='Error@5', ylabel='error %')
+        if 'grad' in train_results.keys():
+            results.plot(x='epoch', y=['training grad'],
+                         legend=['gradient L2 norm'],
+                         title='Gradient Norm', ylabel='value')
+        results.save()
 
-    if args.benchmark_mode:
-        logging.info('\n Elapsed time {0:.3f} s \n'.format(time.time() - start_time))
-        logging.info('Allreduce Time {0:.3f} s \n'
-                     'Communication time {1:.3f} s \n'
-                     .format(hvd.allreduce_time() / BILLION, hvd.communication_time() / BILLION))
+    logging.info('\n Elapsed time {0:.3f} s \n'.format(time.time() - start_time))
+
+    # if args.benchmark_mode:
+    logging.info('Allreduce Time {0:.3f} s \n'
+                 'Communication time {1:.3f} s \n'
+                 'Compression time {2:.3f} s \n'
+                 'Metainfo time {3:.3f} s \n'
+                 .format(hvd.allreduce_time() / BILLION, hvd.communication_time() / BILLION,
+                         hvd.compression_time() / BILLION, hvd.meta_info_time() / BILLION))
 
 
 if __name__ == '__main__':

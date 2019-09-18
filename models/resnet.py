@@ -193,7 +193,6 @@ class ResNet_imagenet(ResNet):
         self.bn1 = nn.BatchNorm2d(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-
         for i in range(len(layers)):
             layer = self._make_layer(block=block, planes=width[i], blocks=layers[i], expansion=expansion,
                                      stride=1 if i == 0 else 2, residual_block=residual_block, groups=groups[i],
@@ -231,7 +230,8 @@ class ResNet_imagenet(ResNet):
                 {'epoch': 43, 'lr': scale_lr * 1e-4},
             ]
             self.data_regime = [
-                {'epoch': 0, 'input_size': 128, 'batch_size': 256},
+                {'epoch': 0, 'input_size': 128, 'batch_size': 128},
+                # {'epoch': 0, 'input_size': 128, 'batch_size': 256},
                 {'epoch': 18, 'input_size': 224, 'batch_size': 64},
                 {'epoch': 41, 'input_size': 288, 'batch_size': 32},
             ]
@@ -316,7 +316,7 @@ def resnet(**config):
         if bn_norm == 'TopK':
             torch.nn.BatchNorm2d = TopkBatchNorm2d
 
-    if 'imagenet' in dataset:
+    if 'imagenet' in dataset or 'imagewoof' in dataset:
         config.setdefault('num_classes', 1000)
         depth = config.pop('depth', 50)
         if depth == 18:

@@ -1,3 +1,23 @@
+# Quantized horovod runs
+1. Create virtual environment.
+2. Install pytorch.
+3. Install horovod.
+In horovod repo run
+``` bash
+export HOROVOD_NCCL_HOME=`path/to/nccl` (e.g.nccl//2.4.2-1/cuda10.0)
+HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_WITHOUT_MXNET=1 HOROVOD_WITHOUT_TENSORFLOW=1 HOROVOD_QUANTIZATION=1 \
+pip -v install --ignore-installed .
+```
+4. In convNet repo
+``` bash
+HOROVOD_QUANTIZATION_TYPE=L2 HOROVOD_COMPRESSOR=n HOROVOD_QUANTIZE_THRESHOLD=1 HOROVOD_QUANTIZE_BUCKET_SIZE=64 \ 
+horovodrun -np 4 -H localhost:4 python main.py --model resnet --horovod --model-config "{'depth': 18, 'regime': 'normal'}" \
+--save resnet18_L2_exp4 --dataset imagenet  --datasets-dir ~/Datasets/ --epochs 90 --quantization-bits 4 
+```
+Env variable HOROVOD_COMPRESSOR can be n(normalized), m(maxmin).
+
+Env variable HOROVOD_QUANTIZATION_TYPE can be L2, Li, u(uniform).
+
 # Convolutional networks using PyTorch
 
 This is a complete training example for Deep Convolutional Networks on various datasets (ImageNet, Cifar10, Cifar100, MNIST).

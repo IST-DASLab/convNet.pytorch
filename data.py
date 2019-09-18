@@ -38,7 +38,7 @@ def get_dataset(name, split='train', transform=None,
                               transform=transform,
                               target_transform=target_transform,
                               download=download)
-    elif name == 'imagenet':
+    elif name == 'imagenet' or name == 'imagenette' or name == 'imagewoof':
         if train:
             root = os.path.join(root, 'train')
         else:

@@ -157,6 +157,7 @@ class Trainer(object):
             results['error1'] = 100. - results['prec1']
             results['error5'] = 100. - results['prec5']
             results['data_sum'] = meters['data'].sum
+            results['time_sum'] = meters['step'].sum
             return results
 
         end = time.time()
@@ -195,6 +196,9 @@ class Trainer(object):
             # measure elapsed time
             meters['step'].update(time.time() - end)
             end = time.time()
+            if loss != loss:
+                logging.info("Nan in gradient!")
+                exit(0)
 
             if i % self.print_freq == 0:
                 report = str('{phase} - Epoch: [{0}][{1}/{2}]\t'
