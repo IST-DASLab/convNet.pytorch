@@ -1,7 +1,7 @@
 # Quantized horovod runs
 1. Create virtual environment.
 2. Install all required packages `pip install -r requirements.txt`.
-3. Installing horovod. Go to horovod repo.
+3. Installing horovod. Go to horovod repo. You need openmpi version not earlier 4.0.0.
 In horovod repo run
 ``` bash
 export HOROVOD_NCCL_HOME=`path/to/nccl` (e.g.nccl//2.4.2-1/cuda10.0)
