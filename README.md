@@ -1,24 +1,28 @@
 # Quantized horovod runs
 1. Create virtual environment.
-2. Install pytorch.
-3. Install horovod.
+2. Install all required packages `pip install -r requirements.txt`.
+3. Installing horovod. Go to horovod repo. You need openmpi version not earlier 4.0.0.
 In horovod repo run
 ``` bash
 export HOROVOD_NCCL_HOME=`path/to/nccl` (e.g.nccl//2.4.2-1/cuda10.0)
 HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_WITHOUT_MXNET=1 HOROVOD_WITHOUT_TENSORFLOW=1 HOROVOD_QUANTIZATION=1 \
 pip -v install --ignore-installed .
 ```
-4. In convNet repo
-``` bash
-HOROVOD_QUANTIZATION_TYPE=L2 HOROVOD_COMPRESSOR=n HOROVOD_QUANTIZE_THRESHOLD=1 HOROVOD_QUANTIZE_BUCKET_SIZE=64 \ 
-horovodrun -np $num_process -H localhost:$num_process python main.py --model resnet --horovod --model-config "{'depth': 18, 'regime': 'normal'}" \
---save resnet18_L2_exp4 --dataset imagenet  --datasets-dir ~/Datasets/ --epochs 90 --quantization-bits 4 
-```
+4. In convNet repo:
+Create directory `results` and run following command. 
 Env variable HOROVOD_COMPRESSOR can be n(normalized), m(maxmin).
 
 Env variable HOROVOD_QUANTIZATION_TYPE can be eL2, eLi, u(uniform).
 
-To run on models from torchvision just put its name(e.g. wide_resnet50_2) after --model keyword.
+`num_processes` is the number of gpus you want to run on. `save_dir` is directory inside dir results where graphs will be saved.
+Directory with dataset is assumed to be inside directory ~/Datasets/.
+``` bash
+HOROVOD_QUANTIZATION_TYPE=L2 HOROVOD_COMPRESSOR=n HOROVOD_QUANTIZE_THRESHOLD=1 HOROVOD_QUANTIZE_BUCKET_SIZE=64 \ 
+horovodrun -np $num_process -H localhost:$num_process python main.py --model resnet --horovod --model-config "{'depth': 18, 'regime': 'normal'}" \
+--save $save_dir --dataset imagenet  --datasets-dir ~/Datasets/ --epochs 90 --quantization-bits 4 
+```
+
+To run on models from torchvision just put model's name(e.g. wide_resnet50_2) after --model keyword.
 In this case you may need to define regime in --model-config argument. Example of argument:
 ```json
 {
