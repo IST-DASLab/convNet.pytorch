@@ -10,6 +10,8 @@ import torch.optim
 import torch.utils.data
 import models
 import torch.distributed as dist
+import horovod.torch as hvd
+
 from data import DataRegime
 from utils.log import setup_logging, ResultsLog, save_checkpoint
 from utils.optim import OptimRegime
@@ -19,8 +21,7 @@ from utils.param_filter import FilterModules, is_bn
 from datetime import datetime
 from ast import literal_eval
 from trainer import Trainer
-
-import horovod.torch as hvd
+from torchvision import models as tvmodels
 
 BILLION = 1000000000
 
@@ -165,12 +166,6 @@ def main():
     logging.info("saving to %s", save_path)
     logging.debug("run arguments: %s", args)
     logging.info("creating model %s", args.model)
-    mapping_devices = {
-        0: 0,
-        1: 3,
-        2: 0,
-        3: 3
-    }
     if 'cuda' in args.device and torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
         # torch.cuda.set_device(mapping_devices[hvd.local_rank()] if args.horovod else args.device_ids[0])
@@ -180,14 +175,19 @@ def main():
         args.device_ids = None
     print(args)
     # create model
-    model = models.__dict__[args.model]
     model_config = {'dataset': args.dataset}
+    if args.model in models.__dict__:
+        model = models.__dict__[args.model]
+        if args.model_config is not '':
+            model_config = dict(model_config, **literal_eval(args.model_config))
 
-    if args.model_config is not '':
-        model_config = dict(model_config, **literal_eval(args.model_config))
-
-    model = model(**model_config)
-    logging.info("created model with configuration: %s", model_config)
+        model = model(**model_config)
+        logging.info("created model with configuration: %s", model_config)
+    else:
+        m_construct = getattr(tvmodels, args.model, None)
+        if not m_construct:
+            raise ValueError("no such module %s" .format(args.model))
+        model = m_construct()
     num_parameters = sum([l.nelement() for l in model.parameters()])
     logging.info("number of parameters: %d", num_parameters)
 
