@@ -277,11 +277,12 @@ def main():
         train_data.set_epoch(epoch)
         val_data.set_epoch(epoch)
         logging.info('\nStarting Epoch: {0}\n'.format(epoch + 1))
-
+        train_time = time.time()
         # train for one epoch
         train_results = trainer.train(train_data.get_loader(),
                                       duplicates=train_data.get('duplicates'),
                                       chunk_batch=args.chunk_batch)
+        print("Train time: ", time.time() - train_time)
         test_time = time.time()
         # evaluate on validation set
         if not args.benchmark_mode:
