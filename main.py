@@ -297,6 +297,8 @@ def main():
                      .format(epoch + 1, train=train_results))
         if args.benchmark_mode:
             continue
+        if args.local_rank > 0 and (args.horovod or args.distributed):
+            continue
         # remember best prec@1 and save checkpoint
         is_best = val_results['prec1'] > best_prec1
         best_prec1 = max(val_results['prec1'], best_prec1)
